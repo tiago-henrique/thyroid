@@ -3,13 +3,10 @@ import tensorflow as tf
 import numpy as np
 from PIL import Image
 from tensorflow.keras import layers, regularizers
-import os
 
 st.set_page_config(layout="wide")
 
-#MODEL_PATH = st.secrets["MODELO"]
-MODEL_URL = st.secrets["MODELO"]
-MODEL_PATH = "algoritmo.h5"
+MODEL_PATH = st.secrets["MODELO"]
 
 @st.cache_resource
 def load_model():
