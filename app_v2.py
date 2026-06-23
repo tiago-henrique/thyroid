@@ -17,7 +17,7 @@ st.set_page_config(
 # =========================
 # MODEL CONFIG
 # =========================
-MODEL_URL = st.secrets["MODEL_URL"]
+MODEL_URL = st.secrets["MODELO"]
 MODEL_PATH = "algoritmo.h5"
 
 IMG_SIZE = (224, 224)
