@@ -6,7 +6,23 @@ from tensorflow.keras import layers, regularizers
 
 st.set_page_config(layout="wide")
 
-MODEL_PATH = st.secrets["MODELO"]
+#MODEL_PATH = st.secrets["MODELO"]
+MODEL_URL = st.secrets["MODELO"]
+MODEL_PATH = "algoritmo.h5"
+
+@st.cache_resource
+def load_model():
+
+    if not os.path.exists(MODEL_PATH):
+        response = requests.get(MODEL_URL)
+
+        with open(MODEL_PATH, "wb") as f:
+            f.write(response.content)
+
+    return tf.keras.models.load_model(MODEL_PATH)
+
+model = load_model()
+
 IMG_SIZE = (224, 224)
 DISPLAY_WIDTH = 250  # <- controla o tamanho da imagem exibida na tela
 
