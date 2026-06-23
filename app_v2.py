@@ -3,38 +3,33 @@ import tensorflow as tf
 import numpy as np
 from PIL import Image
 from tensorflow.keras import layers, regularizers
+import os
+import requests
 
-st.set_page_config(layout="wide")
+# =========================
+# CONFIGURAÇÃO STREAMLIT
+# =========================
+st.set_page_config(
+    page_title="Classificação de Câncer de Tireoide",
+    layout="wide"
+)
 
-MODEL_PATH = st.secrets["MODELO"]
-
-@st.cache_resource
-def load_model():
-
-    if not os.path.exists(MODEL_PATH):
-        response = requests.get(MODEL_URL)
-
-        with open(MODEL_PATH, "wb") as f:
-            f.write(response.content)
-
-    return tf.keras.models.load_model(MODEL_PATH)
-
-model = load_model()
+# =========================
+# MODEL CONFIG
+# =========================
+MODEL_URL = st.secrets["MODEL_URL"]
+MODEL_PATH = "algoritmo.h5"
 
 IMG_SIZE = (224, 224)
-DISPLAY_WIDTH = 250  # <- controla o tamanho da imagem exibida na tela
+DISPLAY_WIDTH = 250
+
+# =========================
+# CUSTOM LAYERS
+# =========================
 
 class Avg2MaxPooling(layers.Layer):
-
-    def __init__(
-        self,
-        pool_size=3,
-        strides=2,
-        padding="same",
-        **kwargs
-    ):
+    def __init__(self, pool_size=3, strides=2, padding="same", **kwargs):
         super().__init__(**kwargs)
-
         self.pool_size = pool_size
         self.strides = strides
         self.padding = padding
@@ -54,25 +49,20 @@ class Avg2MaxPooling(layers.Layer):
         self.bn = layers.BatchNormalization()
 
     def call(self, inputs):
-
         x_avg = self.avg_pool(inputs)
         x_max = self.max_pool(inputs)
-
         x = x_avg - 2 * x_max
-
         return self.bn(x)
 
     def get_config(self):
-
         config = super().get_config()
-
         config.update({
             "pool_size": self.pool_size,
             "strides": self.strides,
             "padding": self.padding
         })
-
         return config
+
 
 class SEBlock(layers.Layer):
     def __init__(self, ratio=16, **kwargs):
@@ -81,16 +71,10 @@ class SEBlock(layers.Layer):
 
     def build(self, input_shape):
         channels = input_shape[-1]
-        self.gap = layers.GlobalAveragePooling2D()
-        self.fc1 = layers.Dense(
-            max(channels // self.ratio, 1),
-            activation="swish"
-        )
 
-        self.fc2 = layers.Dense(
-            channels,
-            activation="sigmoid"
-        )
+        self.gap = layers.GlobalAveragePooling2D()
+        self.fc1 = layers.Dense(max(channels // self.ratio, 1), activation="swish")
+        self.fc2 = layers.Dense(channels, activation="sigmoid")
         self.reshape = layers.Reshape((1, 1, channels))
 
     def call(self, inputs):
@@ -100,17 +84,9 @@ class SEBlock(layers.Layer):
         x = self.reshape(x)
         return inputs * x
 
-class DepthwiseSeparableConv(layers.Layer):
 
-    def __init__(
-        self,
-        filters,
-        kernel_size=3,
-        strides=1,
-        se_ratio=16,
-        reg=0.001,
-        **kwargs
-    ):
+class DepthwiseSeparableConv(layers.Layer):
+    def __init__(self, filters, kernel_size=3, strides=1, se_ratio=16, reg=0.001, **kwargs):
         super().__init__(**kwargs)
 
         self.filters = filters
@@ -134,23 +110,18 @@ class DepthwiseSeparableConv(layers.Layer):
         )
 
         self.bn = layers.BatchNormalization()
-
         self.se = SEBlock(se_ratio)
 
     def call(self, inputs):
-
         x = self.depthwise(inputs)
         x = self.pointwise(x)
         x = self.bn(x)
         x = tf.nn.swish(x)
         x = self.se(x)
-
         return x
 
     def get_config(self):
-
         config = super().get_config()
-
         config.update({
             "filters": self.filters,
             "kernel_size": self.kernel_size,
@@ -158,12 +129,22 @@ class DepthwiseSeparableConv(layers.Layer):
             "se_ratio": self.se_ratio,
             "reg": self.reg
         })
-
         return config
 
 
+# =========================
+# MODEL LOAD
+# =========================
+
 @st.cache_resource
 def load_model():
+
+    if not os.path.exists(MODEL_PATH):
+        r = requests.get(MODEL_URL)
+        r.raise_for_status()
+
+        with open(MODEL_PATH, "wb") as f:
+            f.write(r.content)
 
     model = tf.keras.models.load_model(
         MODEL_PATH,
@@ -176,22 +157,23 @@ def load_model():
 
     return model
 
+
+model = load_model()
+
+
+# =========================
+# PREPROCESSAMENTO
+# =========================
+
 def preprocess_image(image):
     image = image.convert("RGB")
     image = image.resize(IMG_SIZE)
-    img = np.array(image).astype(np.float32)
-    img = img / 255.0
+    img = np.array(image).astype(np.float32) / 255.0
     img = np.expand_dims(img, axis=0)
     return img
 
-def gerar_thumbnail(image, size=(DISPLAY_WIDTH, DISPLAY_WIDTH)):
-    """
-    Recorta a imagem no centro para a proporção desejada
-    e redimensiona para um tamanho fixo, garantindo que
-    todas as miniaturas exibidas tenham exatamente o
-    mesmo tamanho, independente da imagem original.
-    """
 
+def gerar_thumbnail(image, size=(DISPLAY_WIDTH, DISPLAY_WIDTH)):
     image = image.convert("RGB")
 
     target_w, target_h = size
@@ -201,111 +183,100 @@ def gerar_thumbnail(image, size=(DISPLAY_WIDTH, DISPLAY_WIDTH)):
     current_ratio = w / h
 
     if current_ratio > target_ratio:
-        # imagem mais larga que o alvo -> recorta as laterais
         new_w = int(h * target_ratio)
         left = (w - new_w) // 2
         box = (left, 0, left + new_w, h)
     else:
-        # imagem mais alta que o alvo -> recorta topo/base
         new_h = int(w / target_ratio)
         top = (h - new_h) // 2
         box = (0, top, w, top + new_h)
 
     image_cropped = image.crop(box)
-    thumbnail = image_cropped.resize(size, Image.LANCZOS)
-
-    return thumbnail
+    return image_cropped.resize(size, Image.LANCZOS)
 
 
 def classificar_imagem(model, image):
-
     img = preprocess_image(image)
-    prediction = model.predict(img, verbose=0)
-    prediction = float(prediction[0][0])
+    prediction = model.predict(img, verbose=0)[0][0]
 
     if prediction >= 0.5:
-        classe = "Maligno"
-        confianca = prediction
+        return "Maligno", prediction, prediction
     else:
-        classe = "Benigno"
-        confianca = 1 - prediction
-    return classe, confianca, prediction
+        return "Benigno", 1 - prediction, prediction
 
-st.set_page_config(
-    page_title="Classificação de Câncer de Tireoide",
-)
+
+# =========================
+# UI STREAMLIT
+# =========================
 
 st.title("Classificação de Câncer de Tireoide")
-try:
-    model = load_model()
-except Exception as e:
-    st.error("Erro ao carregar o modelo")
-    st.code(str(e))
-    st.stop()
 
-# Lista de imagens (em sessão) usada tanto para upload quanto para câmera
+# sessão
 if "imagens" not in st.session_state:
-    st.session_state.imagens = []  # cada item: PIL.Image
+    st.session_state.imagens = []
 
-opcao = st.radio(
-    "Escolha uma opção",
-    ["Upload", "Câmera"],
-    horizontal=True
-)
+opcao = st.radio("Escolha uma opção", ["Upload", "Câmera"], horizontal=True)
 
 if opcao == "Upload":
 
     uploaded_files = st.file_uploader(
-        "Selecione uma ou mais imagens",
+        "Selecione imagens",
         type=["jpg", "jpeg", "png"],
         accept_multiple_files=True
     )
 
     if uploaded_files:
-        st.session_state.imagens = [
-            Image.open(f) for f in uploaded_files
-        ]
+        st.session_state.imagens = [Image.open(f) for f in uploaded_files]
+
 else:
 
     captured = st.camera_input("Capture uma imagem")
-    col_a, col_b = st.columns(2)
-    with col_a:
-        if captured and st.button("➕ Adicionar foto capturada"):
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if captured and st.button("Adicionar foto"):
             st.session_state.imagens.append(Image.open(captured))
-            st.success("Foto adicionada! Capture outra ou avance para a análise.")
-    with col_b:
-        if st.button("🗑️ Limpar todas as fotos"):
+
+    with col2:
+        if st.button("Limpar imagens"):
             st.session_state.imagens = []
+
+
+# =========================
+# RESULTADOS
+# =========================
+
 imagens = st.session_state.imagens
 
 if imagens:
-    st.markdown(f"**{len(imagens)} imagem(ns) selecionada(s)**")
-    n_cols = 4
-    cols = st.columns(n_cols)
-    resultados = []
-    with st.spinner("Classificando imagens..."):
-        for idx, image in enumerate(imagens):
-            classe, confianca, prediction = classificar_imagem(model, image)
-            resultados.append((image, classe, confianca, prediction))
 
-    for idx, (image, classe, confianca, prediction) in enumerate(resultados):
-        col = cols[idx % n_cols]
-        with col:
-            thumb = gerar_thumbnail(image)
-            st.image(
-                thumb,
-                caption=f"Imagem {idx + 1}"
-            )
+    st.write(f"**{len(imagens)} imagem(ns)**")
+
+    cols = st.columns(4)
+    resultados = []
+
+    with st.spinner("Classificando..."):
+        for img in imagens:
+            resultados.append((img, *classificar_imagem(model, img)))
+
+    for i, (img, classe, confianca, pred) in enumerate(resultados):
+
+        with cols[i % 4]:
+
+            st.image(gerar_thumbnail(img), caption=f"Imagem {i+1}")
+
             if classe == "Maligno":
-                st.error(f"Resultado: {classe}")
+                st.error(classe)
             else:
-                st.success(f"Resultado: {classe}")
+                st.success(classe)
 
             st.progress(float(confianca))
-            st.write(f"Confiança: {confianca * 100:.2f}%")
+            st.write(f"Confiança: {confianca*100:.2f}%")
 
-            with st.expander("Probabilidades"):
-                st.write(f"Maligno: {prediction * 100:.2f}%")
-                st.write(f"Benigno: {(1 - prediction) * 100:.2f}%")
+            with st.expander("Detalhes"):
+                st.write(f"Maligno: {pred*100:.2f}%")
+                st.write(f"Benigno: {(1-pred)*100:.2f}%")
+
 else:
-    st.info("Nenhuma imagem selecionada ainda.")
+    st.info("Nenhuma imagem selecionada.")
