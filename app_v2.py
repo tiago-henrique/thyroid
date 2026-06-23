@@ -133,19 +133,49 @@ class DepthwiseSeparableConv(layers.Layer):
 
 
 # =========================
-# MODEL LOAD
+# MODEL LOAD (ROBUSTO)
 # =========================
 
 @st.cache_resource
 def load_model():
 
-    if not os.path.exists(MODEL_PATH):
-        r = requests.get(MODEL_URL)
-        r.raise_for_status()
+    # já existe localmente
+    if os.path.exists(MODEL_PATH):
+        model = tf.keras.models.load_model(
+            MODEL_PATH,
+            compile=False,
+            custom_objects={
+                "Avg2MaxPooling": Avg2MaxPooling,
+                "DepthwiseSeparableConv": DepthwiseSeparableConv
+            }
+        )
+        return model
+
+    # download seguro
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+
+        with st.spinner("Baixando modelo..."):
+            r = requests.get(MODEL_URL, headers=headers, stream=True, timeout=60)
+
+        st.write("Status HTTP:", r.status_code)
+
+        if r.status_code != 200:
+            st.error("Erro ao baixar o modelo.")
+            st.write(r.text[:500])
+            return None
 
         with open(MODEL_PATH, "wb") as f:
-            f.write(r.content)
+            for chunk in r.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
 
+    except Exception as e:
+        st.error("Falha ao baixar modelo.")
+        st.exception(e)
+        return None
+
+    # carregar modelo
     model = tf.keras.models.load_model(
         MODEL_PATH,
         compile=False,
@@ -159,6 +189,9 @@ def load_model():
 
 
 model = load_model()
+
+if model is None:
+    st.stop()
 
 
 # =========================
@@ -211,7 +244,6 @@ def classificar_imagem(model, image):
 
 st.title("Classificação de Câncer de Tireoide")
 
-# sessão
 if "imagens" not in st.session_state:
     st.session_state.imagens = []
 
