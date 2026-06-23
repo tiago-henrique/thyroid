@@ -7,7 +7,6 @@ from tensorflow.keras import layers, regularizers
 st.set_page_config(layout="wide")
 
 MODEL_PATH = st.secrets["MODELO"]
-#MODEL_PATH = "thyroid_cancer_model.h5"
 IMG_SIZE = (224, 224)
 DISPLAY_WIDTH = 250  # <- controla o tamanho da imagem exibida na tela
 
